@@ -8,7 +8,7 @@ import { formatBytes } from '~/lib/util'
 import { useModals } from '~/context/ModalContext'
 import { ChatMessage } from '../../../types/chat'
 import classNames from '~/lib/classNames'
-import { IconX } from '@tabler/icons-react'
+import { IconX, IconBulb, IconBulbOff } from '@tabler/icons-react'
 import { DEFAULT_QUERY_REWRITE_MODEL } from '../../../constants/ollama'
 import { useSystemSetting } from '~/hooks/useSystemSetting'
 
@@ -33,6 +33,7 @@ export default function Chat({
   const [messages, setMessages] = useState<ChatMessage[]>([])
   const [selectedModel, setSelectedModel] = useState<string>('')
   const [isStreamingResponse, setIsStreamingResponse] = useState(false)
+  const [thinkingEnabled, setThinkingEnabled] = useState(false)
   const streamAbortRef = useRef<AbortController | null>(null)
 
   // Fetch all sessions
@@ -253,7 +254,7 @@ export default function Chat({
 
         try {
           await api.streamChatMessage(
-            { model: selectedModel || 'llama3.2', messages: chatMessages, stream: true, sessionId: sessionId ? Number(sessionId) : undefined },
+            { model: selectedModel || 'llama3.2', messages: chatMessages, stream: true, sessionId: sessionId ? Number(sessionId) : undefined, enableThinking: thinkingEnabled },
             (chunkContent, chunkThinking, done) => {
               if (chunkThinking.length > 0 && thinkingStartTime === null) {
                 thinkingStartTime = Date.now()
@@ -347,7 +348,7 @@ export default function Chat({
         })
       }
     },
-    [activeSessionId, messages, selectedModel, chatMutation, queryClient, streamingEnabled]
+    [activeSessionId, messages, selectedModel, chatMutation, queryClient, streamingEnabled, thinkingEnabled]
   )
 
   return (
@@ -383,6 +384,19 @@ export default function Chat({
                 {remoteStatus?.connected === false ? 'Remote Disconnected' : 'Remote Connected'}
               </span>
             )}
+            <button
+              onClick={() => setThinkingEnabled((prev) => !prev)}
+              title={thinkingEnabled ? 'Thinking enabled — click to disable' : 'Thinking disabled — click to enable'}
+              className={classNames(
+                'flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-medium border transition-colors',
+                thinkingEnabled
+                  ? 'text-amber-700 bg-amber-50 border-amber-200 hover:bg-amber-100'
+                  : 'text-text-muted bg-surface-secondary border-border-subtle hover:bg-surface-primary'
+              )}
+            >
+              {thinkingEnabled ? <IconBulb size={14} /> : <IconBulbOff size={14} />}
+              {thinkingEnabled ? 'Thinking' : 'No Think'}
+            </button>
             <div className="flex items-center gap-2">
               <label htmlFor="model-select" className="text-sm text-text-secondary">
                 Model:

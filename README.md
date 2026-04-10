@@ -41,7 +41,7 @@ For more control over the installation process, copy and paste the [Docker Compo
 N.O.M.A.D. is a management UI ("Command Center") and API that orchestrates a collection of containerized tools and resources via [Docker](https://www.docker.com/). It handles installation, configuration, and updates for everything — so you don't have to.
 
 **Built-in capabilities include:**
-- **AI Chat with Knowledge Base** — local AI chat powered by [Ollama](https://ollama.com/) or you can use OpenAI API compatible software such as LM Studio or llama.cpp, with document upload and semantic search (RAG via [Qdrant](https://qdrant.tech/))
+- **AI Chat with Knowledge Base** — local AI chat powered by [Ollama](https://ollama.com/) with support for remote backends ([Unsloth Studio](https://unsloth.ai/), LM Studio, llama.cpp, etc.), API key authentication, thinking mode toggle, and document upload with semantic search (RAG via [Qdrant](https://qdrant.tech/))
 - **Information Library** — offline Wikipedia, medical references, ebooks, and more via [Kiwix](https://kiwix.org/)
 - **Education Platform** — Khan Academy courses with progress tracking via [Kolibri](https://learningequality.org/kolibri/)
 - **Offline Maps** — downloadable regional maps via [ProtoMaps](https://protomaps.com)
@@ -57,7 +57,7 @@ N.O.M.A.D. also includes built-in tools like a Wikipedia content selector, ZIM l
 | Capability | Powered By | What You Get |
 |-----------|-----------|-------------|
 | Information Library | Kiwix | Offline Wikipedia, medical references, survival guides, ebooks |
-| AI Assistant | Ollama + Qdrant | Built-in chat with document upload and semantic search |
+| AI Assistant | Ollama + Qdrant | Built-in chat with document upload, semantic search, thinking toggle, and support for remote backends (Unsloth Studio, LM Studio, etc.) |
 | Education Platform | Kolibri | Khan Academy courses, progress tracking, multi-user support |
 | Offline Maps | ProtoMaps | Downloadable regional maps with search and navigation |
 | Data Tools | CyberChef | Encryption, encoding, hashing, and data analysis |
@@ -94,10 +94,20 @@ To run LLM's and other included AI tools:
 Again, Project N.O.M.A.D. itself is quite lightweight - it's the tools and resources you choose to install with N.O.M.A.D. that will determine the specs required for your unique deployment
 
 #### Running AI models on a different host
-By default, N.O.M.A.D.'s installer will attempt to setup Ollama on the host when the AI Assistant is installed. However, if you would like to run the AI model on a different host, you can go to the settings of of the AI assistant and input a URL for either an ollama or OpenAI-compatible API server (such as LM Studio).  
-Note that if you use Ollama on a different host, you must start the server with this option `OLLAMA_HOST=0.0.0.0`.  
-Ollama is the preferred way to use the AI assistant as it has features such as model download that OpenAI API does not support. So when using LM Studio for example, you will have to use LM Studio to download models.
-You are responsible for the setup of Ollama/OpenAI server on the other host.
+By default, N.O.M.A.D.'s installer will attempt to setup Ollama on the host when the AI Assistant is installed. However, if you would like to run the AI model on a different host, you can go to the settings of the AI assistant and input a URL for either an Ollama or OpenAI-compatible API server (such as LM Studio, llama.cpp, or Unsloth Studio).
+
+**Supported backends:**
+- **Ollama** (preferred) — supports model downloading, thinking detection, and all features
+- **LM Studio / llama.cpp** — OpenAI-compatible API, no model download support
+- **Unsloth Studio** — requires API key authentication; supports `enable_thinking` toggle
+
+For remote Ollama instances, the host must be started with `OLLAMA_HOST=0.0.0.0`. When using non-Ollama backends, you will need to download and manage models directly in that application.
+
+**API Key Authentication:** Some backends (e.g. Unsloth Studio, vLLM) require authentication. You can provide an API key in the Remote Connection settings. For backends that use JWT tokens (like Unsloth Studio), N.O.M.A.D. supports automatic token refresh using a stored refresh token — no manual token updates needed after initial setup.
+
+**Thinking Mode Toggle:** The chat interface includes a thinking mode toggle button. When enabled, models with reasoning capabilities (e.g. Gemma 4, QwQ) will generate step-by-step reasoning before answering. When disabled, responses are faster as the model skips the reasoning phase.
+
+**RAG with Remote Backends:** When using a remote backend for chat, the local Ollama instance is still used for generating embeddings (RAG). This means your Knowledge Base and Kiwix ZIM files are embedded locally regardless of which backend handles chat.
 
 ## Frequently Asked Questions (FAQ)
 For answers to common questions about Project N.O.M.A.D., please see our [FAQ](FAQ.md) page.

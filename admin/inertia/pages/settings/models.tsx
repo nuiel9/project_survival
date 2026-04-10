@@ -26,7 +26,7 @@ export default function ModelsPage(props: {
   models: {
     availableModels: NomadOllamaModel[]
     installedModels: NomadInstalledModel[]
-    settings: { chatSuggestionsEnabled: boolean; aiAssistantCustomName: string; remoteOllamaUrl: string; ollamaFlashAttention: boolean }
+    settings: { chatSuggestionsEnabled: boolean; aiAssistantCustomName: string; remoteOllamaUrl: string; remoteOllamaApiKeySet: boolean; ollamaFlashAttention: boolean }
   }
 }) {
   const { aiAssistantName } = usePage<{ aiAssistantName: string }>().props
@@ -102,6 +102,8 @@ export default function ModelsPage(props: {
     props.models.settings.aiAssistantCustomName
   )
   const [remoteOllamaUrl, setRemoteOllamaUrl] = useState(props.models.settings.remoteOllamaUrl)
+  const [remoteOllamaApiKey, setRemoteOllamaApiKey] = useState('')
+  const [remoteOllamaApiKeySet, setRemoteOllamaApiKeySet] = useState(props.models.settings.remoteOllamaApiKeySet)
   const [remoteOllamaError, setRemoteOllamaError] = useState<string | null>(null)
   const [remoteOllamaSaving, setRemoteOllamaSaving] = useState(false)
 
@@ -109,7 +111,7 @@ export default function ModelsPage(props: {
     setRemoteOllamaError(null)
     setRemoteOllamaSaving(true)
     try {
-      const res = await api.configureRemoteOllama(remoteOllamaUrl || null)
+      const res = await api.configureRemoteOllama(remoteOllamaUrl || null, remoteOllamaApiKey || null)
       if (res?.success) {
         addNotification({ message: res.message, type: 'success' })
         router.reload()
@@ -369,7 +371,7 @@ export default function ModelsPage(props: {
                       </td>
                       <td className="px-4 py-3">
                         <span className="text-sm text-text-secondary">
-                          {model.details.parameter_size || 'N/A'}
+                          {model.details?.parameter_size || 'N/A'}
                         </span>
                       </td>
                       <td className="px-4 py-3">
@@ -401,7 +403,7 @@ export default function ModelsPage(props: {
               For remote Ollama instances, the host must be started with <code className="bg-surface-secondary px-1 rounded">OLLAMA_HOST=0.0.0.0</code>.
             </p>
             <div className="flex items-end gap-3">
-              <div className="flex-1">
+              <div className="flex-1 space-y-3">
                 <Input
                   name="remoteOllamaUrl"
                   label="Remote Ollama/OpenAI API URL"
@@ -409,6 +411,17 @@ export default function ModelsPage(props: {
                   value={remoteOllamaUrl}
                   onChange={(e) => {
                     setRemoteOllamaUrl(e.target.value)
+                    setRemoteOllamaError(null)
+                  }}
+                />
+                <Input
+                  name="remoteOllamaApiKey"
+                  label="API Key (optional)"
+                  type="password"
+                  placeholder={remoteOllamaApiKeySet ? '••••••••  (key is saved — leave blank to keep it)' : 'Required for Unsloth Studio, vLLM, etc.'}
+                  value={remoteOllamaApiKey}
+                  onChange={(e) => {
+                    setRemoteOllamaApiKey(e.target.value)
                     setRemoteOllamaError(null)
                   }}
                 />

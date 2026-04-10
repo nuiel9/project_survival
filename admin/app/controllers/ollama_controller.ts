@@ -121,13 +121,19 @@ export default class OllamaController {
         logger.debug(`[OllamaController] Large system prompt (~${estimatedSystemTokens} tokens), requesting num_ctx: ${numCtx}`)
       }
 
-      // Check if the model supports "thinking" capability for enhanced response generation
-      // If gpt-oss model, it requires a text param for "think" https://docs.ollama.com/api/chat
-      const thinkingCapability = await this.ollamaService.checkModelHasThinking(reqData.model)
-      const think: boolean | 'medium' = thinkingCapability ? (reqData.model.startsWith('gpt-oss') ? 'medium' : true) : false
+      // Determine thinking mode: use client preference if provided, otherwise auto-detect
+      let think: boolean | 'medium' = false
+      if (reqData.enableThinking === true) {
+        think = reqData.model.startsWith('gpt-oss') ? 'medium' : true
+      } else if (reqData.enableThinking === undefined) {
+        // Auto-detect for backwards compatibility
+        const thinkingCapability = await this.ollamaService.checkModelHasThinking(reqData.model)
+        think = thinkingCapability ? (reqData.model.startsWith('gpt-oss') ? 'medium' : true) : false
+      }
+      // enableThinking === false → think stays false
 
-      // Separate sessionId from the Ollama request payload — Ollama rejects unknown fields
-      const { sessionId, ...ollamaRequest } = reqData
+      // Separate sessionId and enableThinking from the Ollama request payload — Ollama rejects unknown fields
+      const { sessionId, enableThinking, ...ollamaRequest } = reqData
 
       // Save user message to DB before streaming if sessionId provided
       let userContent: string | null = null
@@ -179,9 +185,17 @@ export default class OllamaController {
       }
 
       return result
-    } catch (error) {
+    } catch (error: any) {
+      // Auto-refresh token on 401/403 and retry once
+      const status = error?.status || error?.response?.status
+      if (status === 401 || status === 403) {
+        const newToken = await this.ollamaService.refreshToken()
+        if (newToken) {
+          logger.info('[OllamaController] Token refreshed after 401, but requires restart to take effect')
+        }
+      }
       if (reqData.stream) {
-        response.response.write(`data: ${JSON.stringify({ error: true })}\n\n`)
+        response.response.write(`data: ${JSON.stringify({ error: true, message: status === 401 ? 'Authentication expired. Please refresh the page.' : undefined })}\n\n`)
         response.response.end()
         return
       }
@@ -195,9 +209,28 @@ export default class OllamaController {
       return { configured: false, connected: false }
     }
     try {
-      const testResponse = await fetch(`${remoteUrl.replace(/\/$/, '')}/v1/models`, {
+      let apiKey = await KVStore.getValue('ai.remoteOllamaApiKey')
+      const headers: Record<string, string> = {}
+      if (apiKey && typeof apiKey === 'string' && apiKey.trim()) {
+        headers['Authorization'] = `Bearer ${apiKey.trim()}`
+      }
+      let testResponse = await fetch(`${remoteUrl.replace(/\/$/, '')}/v1/models`, {
         signal: AbortSignal.timeout(3000),
+        headers,
       })
+
+      // If unauthorized, try refreshing the token automatically
+      if (testResponse.status === 401 || testResponse.status === 403) {
+        const newToken = await this.ollamaService.refreshToken()
+        if (newToken) {
+          headers['Authorization'] = `Bearer ${newToken}`
+          testResponse = await fetch(`${remoteUrl.replace(/\/$/, '')}/v1/models`, {
+            signal: AbortSignal.timeout(3000),
+            headers,
+          })
+        }
+      }
+
       return { configured: true, connected: testResponse.ok }
     } catch {
       return { configured: true, connected: false }
@@ -206,6 +239,8 @@ export default class OllamaController {
 
   async configureRemote({ request, response }: HttpContext) {
     const remoteUrl: string | null = request.input('remoteUrl', null)
+    const apiKey: string | null = request.input('apiKey', null)
+    const refreshToken: string | null = request.input('refreshToken', null)
 
     const ollamaService = await Service.query().where('service_name', SERVICE_NAMES.OLLAMA).first()
     if (!ollamaService) {
@@ -215,6 +250,8 @@ export default class OllamaController {
     // Clear path: null or empty URL removes remote config and marks service as not installed
     if (!remoteUrl || remoteUrl.trim() === '') {
       await KVStore.clearValue('ai.remoteOllamaUrl')
+      await KVStore.clearValue('ai.remoteOllamaApiKey')
+      await KVStore.clearValue('ai.remoteOllamaRefreshToken')
       ollamaService.installed = false
       ollamaService.installation_status = 'idle'
       await ollamaService.save()
@@ -229,15 +266,20 @@ export default class OllamaController {
       })
     }
 
-    // Test connectivity via OpenAI-compatible /v1/models endpoint (works with Ollama, LM Studio, llama.cpp, etc.)
+    // Test connectivity via OpenAI-compatible /v1/models endpoint (works with Ollama, LM Studio, llama.cpp, Unsloth Studio, etc.)
     try {
+      const headers: Record<string, string> = {}
+      if (apiKey?.trim()) {
+        headers['Authorization'] = `Bearer ${apiKey.trim()}`
+      }
       const testResponse = await fetch(`${remoteUrl.replace(/\/$/, '')}/v1/models`, {
         signal: AbortSignal.timeout(5000),
+        headers,
       })
       if (!testResponse.ok) {
         return response.status(400).send({
           success: false,
-          message: `Could not connect to ${remoteUrl} (HTTP ${testResponse.status}). Make sure the server is running and accessible. For Ollama, start it with OLLAMA_HOST=0.0.0.0.`,
+          message: `Could not connect to ${remoteUrl} (HTTP ${testResponse.status}). Make sure the server is running and accessible. ${testResponse.status === 401 || testResponse.status === 403 ? 'Check your API key.' : 'For Ollama, start it with OLLAMA_HOST=0.0.0.0.'}`,
         })
       }
     } catch (error) {
@@ -247,8 +289,18 @@ export default class OllamaController {
       })
     }
 
-    // Save remote URL and mark service as installed
+    // Save remote URL, API key, refresh token, and mark service as installed
     await KVStore.setValue('ai.remoteOllamaUrl', remoteUrl.trim())
+    if (apiKey?.trim()) {
+      await KVStore.setValue('ai.remoteOllamaApiKey', apiKey.trim())
+    } else {
+      await KVStore.clearValue('ai.remoteOllamaApiKey')
+    }
+    if (refreshToken?.trim()) {
+      await KVStore.setValue('ai.remoteOllamaRefreshToken', refreshToken.trim())
+    } else {
+      await KVStore.clearValue('ai.remoteOllamaRefreshToken')
+    }
     ollamaService.installed = true
     ollamaService.installation_status = 'idle'
     await ollamaService.save()

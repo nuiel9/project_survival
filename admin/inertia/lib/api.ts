@@ -57,11 +57,11 @@ class API {
     })()
   }
 
-  async configureRemoteOllama(remoteUrl: string | null): Promise<{ success: boolean; message: string }> {
+  async configureRemoteOllama(remoteUrl: string | null, apiKey?: string | null, refreshToken?: string | null): Promise<{ success: boolean; message: string }> {
     return catchInternal(async () => {
       const response = await this.client.post<{ success: boolean; message: string }>(
         '/ollama/configure-remote',
-        { remoteUrl }
+        { remoteUrl, apiKey, refreshToken }
       )
       return response.data
     })()

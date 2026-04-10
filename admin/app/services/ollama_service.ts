@@ -56,13 +56,62 @@ export class OllamaService {
 
   constructor() {}
 
+  /**
+   * Attempt to refresh the API token using the stored refresh token.
+   * Works with backends that support token refresh (e.g. Unsloth Studio).
+   * Returns the new access token on success, or null if refresh isn't available/fails.
+   */
+  public async refreshToken(): Promise<string | null> {
+    return this._tryRefreshToken()
+  }
+
+  private async _tryRefreshToken(): Promise<string | null> {
+    const refreshToken = (await KVStore.getValue('ai.remoteOllamaRefreshToken')) as string | null
+    const baseUrl = (await KVStore.getValue('ai.remoteOllamaUrl')) as string | null
+    if (!refreshToken?.trim() || !baseUrl?.trim()) return null
+
+    try {
+      const response = await axios.post(
+        `${baseUrl.trim().replace(/\/$/, '')}/api/auth/refresh`,
+        { refresh_token: refreshToken.trim() },
+        { timeout: 5000 }
+      )
+      const { access_token, refresh_token: newRefreshToken } = response.data
+      if (!access_token) return null
+
+      // Persist the new tokens
+      await KVStore.setValue('ai.remoteOllamaApiKey', access_token)
+      if (newRefreshToken) {
+        await KVStore.setValue('ai.remoteOllamaRefreshToken', newRefreshToken)
+      }
+      logger.info('[OllamaService] Successfully refreshed API token')
+      return access_token
+    } catch (error) {
+      logger.warn(`[OllamaService] Token refresh failed: ${error instanceof Error ? error.message : error}`)
+      return null
+    }
+  }
+
   private async _initialize() {
     if (!this.initPromise) {
       this.initPromise = (async () => {
-        // Check KVStore for a custom base URL (remote Ollama, LM Studio, llama.cpp, etc.)
+        // Check KVStore for a custom base URL (remote Ollama, LM Studio, llama.cpp, Unsloth Studio, etc.)
         const customUrl = (await KVStore.getValue('ai.remoteOllamaUrl')) as string | null
+        let customApiKey = (await KVStore.getValue('ai.remoteOllamaApiKey')) as string | null
         if (customUrl && customUrl.trim()) {
           this.baseUrl = customUrl.trim().replace(/\/$/, '')
+
+          // Check if the current token is expired and try to refresh
+          if (customApiKey?.trim()) {
+            const isExpired = this._isTokenExpired(customApiKey.trim())
+            if (isExpired) {
+              logger.info('[OllamaService] API token appears expired, attempting refresh...')
+              const newToken = await this._tryRefreshToken()
+              if (newToken) {
+                customApiKey = newToken
+              }
+            }
+          }
         } else {
           // Fall back to the local Ollama container managed by Docker
           const dockerService = new (await import('./docker_service.js')).DockerService()
@@ -74,12 +123,28 @@ export class OllamaService {
         }
 
         this.openai = new OpenAI({
-          apiKey: 'nomad', // Required by SDK; not validated by Ollama/LM Studio/llama.cpp
+          apiKey: customApiKey?.trim() || 'nomad',
           baseURL: `${this.baseUrl}/v1`,
         })
       })()
     }
     return this.initPromise
+  }
+
+  /**
+   * Check if a JWT token is expired by decoding its payload.
+   * Returns true if expired or unparseable, false if still valid.
+   */
+  private _isTokenExpired(token: string): boolean {
+    try {
+      const parts = token.split('.')
+      if (parts.length !== 3) return false // Not a JWT, skip expiry check
+      const payload = JSON.parse(Buffer.from(parts[1], 'base64').toString())
+      if (!payload.exp) return false // No expiry claim
+      return payload.exp * 1000 < Date.now()
+    } catch {
+      return false
+    }
   }
 
   private async _ensureDependencies() {
@@ -210,6 +275,10 @@ export class OllamaService {
     }
     if (chatRequest.think) {
       params.think = chatRequest.think
+    } else {
+      // Explicitly disable thinking for backends that support it (e.g. Unsloth Studio)
+      // to avoid models like Gemma 4 generating slow <think> tokens by default
+      params.enable_thinking = false
     }
     if (chatRequest.numCtx) {
       params.num_ctx = chatRequest.numCtx
@@ -241,6 +310,8 @@ export class OllamaService {
     }
     if (chatRequest.think) {
       params.think = chatRequest.think
+    } else {
+      params.enable_thinking = false
     }
     if (chatRequest.numCtx) {
       params.num_ctx = chatRequest.numCtx
@@ -353,18 +424,33 @@ export class OllamaService {
 
   /**
    * Generate embeddings for the given input strings.
+   * Always uses the local Ollama instance for embeddings, even when a remote
+   * backend (Unsloth Studio, LM Studio, etc.) is configured for chat — remote
+   * backends typically don't host embedding models.
    * Tries the Ollama native /api/embed endpoint first, falls back to /v1/embeddings.
    */
   public async embed(model: string, input: string[]): Promise<{ embeddings: number[][] }> {
     await this._ensureDependencies()
-    if (!this.baseUrl || !this.openai) {
+    if (!this.openai) {
       throw new Error('AI service is not initialized.')
+    }
+
+    // Resolve the local Ollama URL for embeddings — remote chat backends
+    // (Unsloth Studio, etc.) don't serve embedding models.
+    const customUrl = (await KVStore.getValue('ai.remoteOllamaUrl')) as string | null
+    let embedBaseUrl = this.baseUrl!
+    if (customUrl && customUrl.trim()) {
+      // A remote backend is configured for chat; use the local Ollama container directly
+      // for embeddings. We can't use DockerService.getServiceURL() because it also returns
+      // the remote URL. In production, the container hostname is the service name.
+      const hostname = process.env.NODE_ENV === 'production' ? SERVICE_NAMES.OLLAMA : 'localhost'
+      embedBaseUrl = `http://${hostname}:11434`
     }
 
     try {
       // Prefer Ollama native endpoint (supports batch input natively)
       const response = await axios.post(
-        `${this.baseUrl}/api/embed`,
+        `${embedBaseUrl}/api/embed`,
         { model, input },
         { timeout: 60000 }
       )
@@ -375,12 +461,34 @@ export class OllamaService {
       }
       return { embeddings: response.data.embeddings }
     } catch {
-      // Fall back to OpenAI-compatible /v1/embeddings
-      // Explicitly request float format — some backends (e.g. LM Studio) don't reliably
-      // implement the base64 encoding the OpenAI SDK requests by default.
+      // Fall back to OpenAI-compatible /v1/embeddings on the local Ollama
       logger.info('[OllamaService] /api/embed unavailable, falling back to /v1/embeddings')
-      const results = await this.openai.embeddings.create({ model, input, encoding_format: 'float' })
+      const embedClient = new OpenAI({ apiKey: 'nomad', baseURL: `${embedBaseUrl}/v1` })
+      const results = await embedClient.embeddings.create({ model, input, encoding_format: 'float' })
       return { embeddings: results.data.map((e) => e.embedding as number[]) }
+    }
+  }
+
+  /**
+   * Get models from the local Ollama instance, bypassing any remote backend config.
+   * Used by RAG to verify embedding model availability.
+   */
+  public async getLocalModels(includeEmbeddings = false): Promise<NomadInstalledModel[]> {
+    const customUrl = (await KVStore.getValue('ai.remoteOllamaUrl')) as string | null
+    if (!customUrl?.trim()) {
+      // No remote configured — getModels already queries local
+      return this.getModels(includeEmbeddings)
+    }
+    const hostname = process.env.NODE_ENV === 'production' ? SERVICE_NAMES.OLLAMA : 'localhost'
+    const localUrl = `http://${hostname}:11434`
+    try {
+      const response = await axios.get(`${localUrl}/api/tags`, { timeout: 5000 })
+      if (!Array.isArray(response.data?.models)) return []
+      const models: NomadInstalledModel[] = response.data.models
+      if (includeEmbeddings) return models
+      return models.filter((m) => !m.name.includes('embed'))
+    } catch {
+      return []
     }
   }
 

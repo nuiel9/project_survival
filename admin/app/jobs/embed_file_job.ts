@@ -27,8 +27,9 @@ export class EmbedFileJob {
     return 'embed-file'
   }
 
-  static getJobId(filePath: string): string {
-    return createHash('sha256').update(filePath).digest('hex').slice(0, 16)
+  static getJobId(filePath: string, batchOffset?: number): string {
+    const key = batchOffset !== undefined ? `${filePath}:batch:${batchOffset}` : filePath
+    return createHash('sha256').update(key).digest('hex').slice(0, 16)
   }
 
   /** Calls job.updateProgress but silently ignores "Missing key" errors (code -1),
@@ -63,10 +64,10 @@ export class EmbedFileJob {
         throw new UnrecoverableError('Ollama service is not installed. Install AI Assistant to enable file embeddings.')
       }
 
-      const existingModels = await ollamaService.getModels()
-      if (!existingModels) {
-        logger.warn('[EmbedFileJob] Ollama service not ready yet. Will retry...')
-        throw new Error('Ollama service not ready yet')
+      const existingModels = await ollamaService.getLocalModels(true)
+      if (!existingModels || existingModels.length === 0) {
+        logger.warn('[EmbedFileJob] Local Ollama service not ready yet. Will retry...')
+        throw new Error('Local Ollama service not ready yet')
       }
 
       const qdrantUrl = await dockerService.getServiceURL('nomad_qdrant')
@@ -207,7 +208,7 @@ export class EmbedFileJob {
   static async dispatch(params: EmbedFileJobParams) {
     const queueService = new QueueService()
     const queue = queueService.getQueue(this.queue)
-    const jobId = this.getJobId(params.filePath)
+    const jobId = this.getJobId(params.filePath, params.batchOffset)
 
     try {
       const job = await queue.add(this.key, params, {

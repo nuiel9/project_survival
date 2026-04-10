@@ -249,7 +249,10 @@ export class RagService {
       )
 
       if (!this.embeddingModelVerified) {
-        const allModels = await this.ollamaService.getModels(true)
+        // Check the local Ollama for embedding models — when a remote backend
+        // (Unsloth Studio, etc.) is configured for chat, getModels() returns its
+        // models which won't include embedding models. Query local Ollama directly.
+        const allModels = await this.ollamaService.getLocalModels(true)
         const embeddingModel =
           allModels.find((model) => model.name === RagService.EMBEDDING_MODEL) ??
           allModels.find((model) => model.name.toLowerCase().includes('nomic-embed-text'))
