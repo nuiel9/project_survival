@@ -537,7 +537,10 @@ export class RagService {
 
     // Count unique articles processed in this batch
     const articlesInBatch = new Set(zimChunks.map((c) => c.documentId)).size
-    const hasMoreBatches = zimChunks.length === ZIM_BATCH_SIZE
+    // More batches remain if we processed a full batch of articles (the extractor
+    // breaks at exactly ZIM_BATCH_SIZE articles). We compare articles, not chunks,
+    // because articles can produce multiple chunks when using structured chunking.
+    const hasMoreBatches = articlesInBatch >= ZIM_BATCH_SIZE
 
     logger.info(
       `[RAG] Successfully embedded ${totalChunks} total chunks from ${articlesInBatch} articles (hasMore: ${hasMoreBatches})`
