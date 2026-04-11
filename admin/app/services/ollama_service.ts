@@ -84,6 +84,14 @@ export class OllamaService {
       if (newRefreshToken) {
         await KVStore.setValue('ai.remoteOllamaRefreshToken', newRefreshToken)
       }
+      // Rebuild the cached OpenAI client so in-flight consumers pick up the new token
+      // without waiting for an admin restart.
+      if (this.baseUrl) {
+        this.openai = new OpenAI({
+          apiKey: access_token,
+          baseURL: `${this.baseUrl}/v1`,
+        })
+      }
       logger.info('[OllamaService] Successfully refreshed API token')
       return access_token
     } catch (error) {
@@ -150,6 +158,24 @@ export class OllamaService {
   private async _ensureDependencies() {
     if (!this.openai) {
       await this._initialize()
+    }
+  }
+
+  /**
+   * Run an OpenAI SDK call and, on a 401/403 from a remote backend, refresh the
+   * token once and retry. Handles tokens that expire mid-process — the cached
+   * `this.openai` client otherwise keeps sending the stale bearer until restart.
+   */
+  private async _withTokenRefresh<T>(fn: () => Promise<T>): Promise<T> {
+    try {
+      return await fn()
+    } catch (err: any) {
+      const status = err?.status ?? err?.response?.status
+      if (status !== 401 && status !== 403) throw err
+      const newToken = await this._tryRefreshToken()
+      if (!newToken) throw err
+      // _tryRefreshToken rebuilt this.openai with the new token
+      return await fn()
     }
   }
 
@@ -284,7 +310,9 @@ export class OllamaService {
       params.num_ctx = chatRequest.numCtx
     }
 
-    const response = await this.openai.chat.completions.create(params)
+    const response = await this._withTokenRefresh(() =>
+      this.openai!.chat.completions.create(params)
+    )
     const choice = response.choices[0]
 
     return {
@@ -317,7 +345,9 @@ export class OllamaService {
       params.num_ctx = chatRequest.numCtx
     }
 
-    const stream = (await this.openai.chat.completions.create(params)) as unknown as Stream<ChatCompletionChunk>
+    const stream = (await this._withTokenRefresh(() =>
+      this.openai!.chat.completions.create(params)
+    )) as unknown as Stream<ChatCompletionChunk>
 
     // Returns how many trailing chars of `text` could be the start of `tag`
     function partialTagSuffix(tag: string, text: string): number {
@@ -514,7 +544,7 @@ export class OllamaService {
       this.isOllamaNative = false
       logger.info('[OllamaService] /api/tags unavailable, falling back to /v1/models')
       try {
-        const modelList = await this.openai!.models.list()
+        const modelList = await this._withTokenRefresh(() => this.openai!.models.list())
         const models: NomadInstalledModel[] = modelList.data.map((m) => ({ name: m.id, size: 0 }))
         if (includeEmbeddings) return models
         return models.filter((m) => !m.name.includes('embed'))
