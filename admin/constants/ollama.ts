@@ -76,7 +76,9 @@ export const RAG_CONTEXT_LIMITS: { maxParams: number; maxResults: number; maxTok
 
 export const SYSTEM_PROMPTS = {
   default: `
- Format all responses using markdown for better readability. Vanilla markdown or GitHub-flavored markdown is preferred.
+Always respond in the same language the user writes in. If the user writes in Thai, respond in Thai. If the user writes in English, respond in English. Match the user's language for every response.
+
+Format all responses using markdown for better readability. Vanilla markdown or GitHub-flavored markdown is preferred.
  - Use **bold** and *italic* for emphasis.
  - Use code blocks with language identifiers for code snippets.
  - Use headers (##, ###) to organize longer responses.
@@ -96,6 +98,7 @@ IMPORTANT INSTRUCTIONS:
 4. If the context is not relevant to the user's question, you can respond using your general knowledge without forcing the context into your answer. Do not mention the context if it's not relevant.
 5. Never fabricate information that isn't in the context or your training data.
 6. If you're unsure or you don't have enough information to answer the user's question, acknowledge the limitations.
+7. Always respond in the same language the user writes in, even if the knowledge base context is in a different language. Translate relevant information as needed to match the user's language.
 
 Format your response using markdown for readability.
 `,
