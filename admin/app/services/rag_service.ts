@@ -856,6 +856,8 @@ export class RagService {
         document_id: result.payload?.document_id as string | undefined,
         content_type: result.payload?.content_type as string | undefined,
         source: result.payload?.source as string | undefined,
+        article_path: result.payload?.article_path as string | undefined,
+        archive_title: result.payload?.archive_title as string | undefined,
       }))
 
       const rerankedResults = this.rerankResults(resultsWithMetadata, keywords, query)
@@ -885,6 +887,9 @@ export class RagService {
           hierarchy: result.hierarchy,
           document_id: result.document_id,
           content_type: result.content_type,
+          source: result.source,
+          article_path: result.article_path,
+          archive_title: result.archive_title,
         },
       }))
     } catch (error) {
