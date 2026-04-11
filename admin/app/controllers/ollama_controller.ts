@@ -12,8 +12,16 @@ import { DEFAULT_QUERY_REWRITE_MODEL, RAG_CONTEXT_LIMITS, SYSTEM_PROMPTS } from 
 import { SERVICE_NAMES } from '../../constants/service_names.js'
 import logger from '@adonisjs/core/services/logger'
 import env from '#start/env'
+import fs from 'node:fs'
 import path from 'node:path'
 import { ChatSource } from '../../types/chat.js'
+
+// Kiwix only serves files mounted at /app/storage/zim/<basename>.zim. Files
+// uploaded via the Knowledge Base land under /app/storage/kb_uploads/ with a
+// "<name>.zim-<hash>.zim" suffix and are NOT in Kiwix's catalog, so linking to
+// them always 404s. Same goes for ZIMs that were later deleted from disk.
+const KIWIX_ZIM_DIR = '/app/storage/zim/'
+const KB_UPLOAD_SUFFIX_RE = /\.zim-[0-9a-f]+\.zim$/i
 type Message = { role: 'system' | 'user' | 'assistant'; content: string }
 
 @inject()
@@ -398,13 +406,30 @@ export default class OllamaController {
       }
     }
 
+    const fileExistsCache = new Map<string, boolean>()
+    const canLinkToKiwix = (source: string): boolean => {
+      if (!source.startsWith(KIWIX_ZIM_DIR)) return false
+      if (KB_UPLOAD_SUFFIX_RE.test(source)) return false
+      const cached = fileExistsCache.get(source)
+      if (cached !== undefined) return cached
+      const exists = fs.existsSync(source)
+      fileExistsCache.set(source, exists)
+      return exists
+    }
+
     for (const doc of docs) {
       const meta = doc.metadata ?? {}
       const key = meta.document_id || meta.article_path || meta.source || doc.text.slice(0, 64)
       const existing = byKey.get(key)
       if (existing && existing.score >= doc.score) continue
 
-      if (meta.content_type === 'zim_article' && kiwixBase && meta.source && meta.article_path) {
+      if (
+        meta.content_type === 'zim_article' &&
+        kiwixBase &&
+        meta.source &&
+        meta.article_path &&
+        canLinkToKiwix(meta.source)
+      ) {
         const bookName = path.basename(meta.source, '.zim')
         const url = `${kiwixBase.replace(/\/$/, '')}/viewer#${bookName}/${meta.article_path}`
         byKey.set(key, {
