@@ -283,7 +283,7 @@ class API {
 
   async streamChatMessage(
     chatRequest: OllamaChatRequest,
-    onChunk: (content: string, thinking: string, done: boolean) => void,
+    onChunk: (content: string, thinking: string, done: boolean, sources?: import('../../types/chat').ChatSource[]) => void,
     signal?: AbortSignal
   ): Promise<void> {
     // Axios doesn't support ReadableStream in browser, so need to use fetch
@@ -319,6 +319,11 @@ class API {
           } catch { continue /* skip malformed chunks */ }
 
           if (data.error) throw new Error('The model encountered an error. Please try again.')
+
+          if (data.sources && Array.isArray(data.sources)) {
+            onChunk('', '', false, data.sources)
+            continue
+          }
 
           onChunk(
             data.message?.content ?? '',

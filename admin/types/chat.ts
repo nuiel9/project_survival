@@ -1,3 +1,10 @@
+export interface ChatSource {
+  title: string
+  archive?: string
+  url?: string
+  score: number
+}
+
 export interface ChatMessage {
   id: string
   role: 'system' | 'user' | 'assistant'
@@ -7,6 +14,7 @@ export interface ChatMessage {
   thinking?: string
   isThinking?: boolean
   thinkingDuration?: number
+  sources?: ChatSource[]
 }
 
 export interface ChatSession {

@@ -255,7 +255,13 @@ export default function Chat({
         try {
           await api.streamChatMessage(
             { model: selectedModel || 'llama3.2', messages: chatMessages, stream: true, sessionId: sessionId ? Number(sessionId) : undefined, enableThinking: thinkingEnabled },
-            (chunkContent, chunkThinking, done) => {
+            (chunkContent, chunkThinking, done, chunkSources) => {
+              if (chunkSources && chunkSources.length > 0) {
+                setMessages((prev) =>
+                  prev.map((m) => (m.id === assistantMsgId ? { ...m, sources: chunkSources } : m))
+                )
+                return
+              }
               if (chunkThinking.length > 0 && thinkingStartTime === null) {
                 thinkingStartTime = Date.now()
               }

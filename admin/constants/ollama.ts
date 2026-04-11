@@ -93,7 +93,7 @@ ${context}
 
 IMPORTANT INSTRUCTIONS:
 1. If the user's question is directly related to the context above, use this information to provide accurate, detailed answers.
-2. Always cite or reference the context when using it (e.g., "According to the information available..." or "Based on the knowledge base...").
+2. Always cite the specific source when using information from the context. Each chunk above is tagged like "[Source 1: Article Title]". Reference these inline as "[Source 1]", "[Source 2]", etc. so the user can follow your citations back to the listed sources.
 3. If the context is only partially relevant, combine it with your general knowledge but be clear about what comes from the knowledge base.
 4. If the context is not relevant to the user's question, you can respond using your general knowledge without forcing the context into your answer. Do not mention the context if it's not relevant.
 5. Never fabricate information that isn't in the context or your training data.

@@ -11,6 +11,8 @@ import type { HttpContext } from '@adonisjs/core/http'
 import { DEFAULT_QUERY_REWRITE_MODEL, RAG_CONTEXT_LIMITS, SYSTEM_PROMPTS } from '../../constants/ollama.js'
 import { SERVICE_NAMES } from '../../constants/service_names.js'
 import logger from '@adonisjs/core/services/logger'
+import path from 'node:path'
+import { ChatSource } from '../../types/chat.js'
 type Message = { role: 'system' | 'user' | 'assistant'; content: string }
 
 @inject()
@@ -45,6 +47,7 @@ export default class OllamaController {
       response.response.flushHeaders()
     }
 
+    let chatSources: ChatSource[] = []
     try {
       // If there are no system messages in the chat inject system prompts
       const hasSystemMessage = reqData.messages.some((msg) => msg.role === 'system')
@@ -92,8 +95,17 @@ export default class OllamaController {
             `[RAG] Injecting ${trimmedDocs.length}/${relevantDocs.length} results (model: ${reqData.model}, maxResults: ${maxResults}, maxTokens: ${maxTokens || 'unlimited'})`
           )
 
+          // Build the user-facing sources list (deduped per article) from the same
+          // chunks we're injecting into the prompt, so citations and LLM context stay aligned.
+          chatSources = await this._buildChatSources(trimmedDocs)
+
           const contextText = trimmedDocs
-            .map((doc, idx) => `[Context ${idx + 1}] (Relevance: ${(doc.score * 100).toFixed(1)}%)\n${doc.text}`)
+            .map((doc, idx) => {
+              const meta = doc.metadata ?? {}
+              const label =
+                meta.article_title || meta.full_title || (meta.source ? path.basename(meta.source) : `Context ${idx + 1}`)
+              return `[Source ${idx + 1}: ${label}] (Relevance: ${(doc.score * 100).toFixed(1)}%)\n${doc.text}`
+            })
             .join('\n\n')
 
           const systemMessage = {
@@ -156,6 +168,9 @@ export default class OllamaController {
           }
           response.response.write(`data: ${JSON.stringify(chunk)}\n\n`)
         }
+        if (chatSources.length > 0) {
+          response.response.write(`data: ${JSON.stringify({ sources: chatSources })}\n\n`)
+        }
         response.response.end()
 
         // Save assistant message and optionally generate title
@@ -172,7 +187,10 @@ export default class OllamaController {
       }
 
       // Non-streaming (legacy) path
-      const result = await this.ollamaService.chat({ ...ollamaRequest, think, numCtx })
+      const result: any = await this.ollamaService.chat({ ...ollamaRequest, think, numCtx })
+      if (chatSources.length > 0) {
+        result.sources = chatSources
+      }
 
       if (sessionId && result?.message?.content) {
         await this.chatService.addMessage(sessionId, 'assistant', result.message.content)
@@ -342,6 +360,50 @@ export default class OllamaController {
 
   async installedModels({ }: HttpContext) {
     return await this.ollamaService.getModels()
+  }
+
+  /**
+   * Build a deduped, user-facing source list from the RAG chunks injected into the prompt.
+   * ZIM-sourced chunks get a Kiwix viewer URL reconstructed from the book name and article path.
+   * Uploaded-file chunks fall back to the bare filename (no URL).
+   */
+  private async _buildChatSources(
+    docs: Array<{ text: string; score: number; metadata?: Record<string, any> }>
+  ): Promise<ChatSource[]> {
+    // Dedupe by document_id (multiple chunks from the same article → one source row).
+    const byKey = new Map<string, { title: string; archive?: string; url?: string; score: number }>()
+
+    let kiwixBase: string | null = null
+    const hasZim = docs.some((d) => d.metadata?.content_type === 'zim_article')
+    if (hasZim) {
+      kiwixBase = await this.dockerService.getServiceURL(SERVICE_NAMES.KIWIX)
+    }
+
+    for (const doc of docs) {
+      const meta = doc.metadata ?? {}
+      const key = meta.document_id || meta.article_path || meta.source || doc.text.slice(0, 64)
+      const existing = byKey.get(key)
+      if (existing && existing.score >= doc.score) continue
+
+      if (meta.content_type === 'zim_article' && kiwixBase && meta.source && meta.article_path) {
+        const bookName = path.basename(meta.source, '.zim')
+        const url = `${kiwixBase.replace(/\/$/, '')}/viewer#${bookName}/${meta.article_path}`
+        byKey.set(key, {
+          title: meta.article_title || meta.full_title || bookName,
+          archive: meta.archive_title,
+          url,
+          score: doc.score,
+        })
+      } else {
+        byKey.set(key, {
+          title: meta.article_title || meta.full_title || (meta.source ? path.basename(meta.source) : 'Untitled source'),
+          archive: meta.archive_title,
+          score: doc.score,
+        })
+      }
+    }
+
+    return Array.from(byKey.values()).sort((a, b) => b.score - a.score)
   }
 
   /**
