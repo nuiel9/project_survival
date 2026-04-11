@@ -11,6 +11,7 @@ import type { HttpContext } from '@adonisjs/core/http'
 import { DEFAULT_QUERY_REWRITE_MODEL, RAG_CONTEXT_LIMITS, SYSTEM_PROMPTS } from '../../constants/ollama.js'
 import { SERVICE_NAMES } from '../../constants/service_names.js'
 import logger from '@adonisjs/core/services/logger'
+import env from '#start/env'
 import path from 'node:path'
 import { ChatSource } from '../../types/chat.js'
 type Message = { role: 'system' | 'user' | 'assistant'; content: string }
@@ -377,6 +378,24 @@ export default class OllamaController {
     const hasZim = docs.some((d) => d.metadata?.content_type === 'zim_article')
     if (hasZim) {
       kiwixBase = await this.dockerService.getServiceURL(SERVICE_NAMES.KIWIX)
+      // getServiceURL returns the docker-internal host in production
+      // (e.g. http://nomad_kiwix_server:8090), which the user's browser
+      // cannot resolve. Rewrite the hostname to the admin's public URL host
+      // so the link works from wherever the browser is.
+      if (kiwixBase) {
+        try {
+          const adminUrl = env.get('URL') as string | undefined
+          if (adminUrl) {
+            const publicHost = new URL(adminUrl).hostname
+            const kiwixParsed = new URL(kiwixBase)
+            kiwixParsed.hostname = publicHost
+            kiwixBase = kiwixParsed.toString().replace(/\/$/, '')
+          }
+        } catch {
+          // If URL parsing fails, fall back to the raw base — worst case the
+          // link still 404s exactly like before.
+        }
+      }
     }
 
     for (const doc of docs) {
