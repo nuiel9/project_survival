@@ -780,14 +780,16 @@ export class RagService {
       }
 
       if (!this.embeddingModelVerified) {
-        const allModels = await this.ollamaService.getModels(true)
+        // Check local Ollama for embedding models — remote backends (Unsloth Studio, etc.)
+        // don't host embedding models, so we can't use getModels() which may return the remote list.
+        const allModels = await this.ollamaService.getLocalModels(true)
         const embeddingModel =
           allModels.find((model) => model.name === RagService.EMBEDDING_MODEL) ??
           allModels.find((model) => model.name.toLowerCase().includes('nomic-embed-text'))
 
         if (!embeddingModel) {
           logger.warn(
-            `[RAG] ${RagService.EMBEDDING_MODEL} not found. Cannot perform similarity search.`
+            `[RAG] ${RagService.EMBEDDING_MODEL} not found on local Ollama. Cannot perform similarity search.`
           )
           this.embeddingModelVerified = false
           return []

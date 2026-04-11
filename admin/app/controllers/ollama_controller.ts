@@ -61,7 +61,7 @@ export default class OllamaController {
       // Will return user's latest message if no rewriting is needed
       const rewrittenQuery = await this.rewriteQueryWithContext(reqData.messages)
 
-      logger.debug(`[OllamaController] Rewritten query for RAG: "${rewrittenQuery}"`)
+      logger.info(`[OllamaController] Rewritten query for RAG: "${rewrittenQuery}"`)
       if (rewrittenQuery) {
         const relevantDocs = await this.ragService.searchSimilarDocuments(
           rewrittenQuery,
@@ -69,7 +69,7 @@ export default class OllamaController {
           0.3 // Minimum similarity score of 0.3
         )
 
-        logger.debug(`[RAG] Retrieved ${relevantDocs.length} relevant documents for query: "${rewrittenQuery}"`)
+        logger.info(`[RAG] Retrieved ${relevantDocs.length} relevant documents for query: "${rewrittenQuery}"`)
 
         // If relevant context is found, inject as a system message with adaptive limits
         if (relevantDocs.length > 0) {
@@ -88,7 +88,7 @@ export default class OllamaController {
             })
           }
 
-          logger.debug(
+          logger.info(
             `[RAG] Injecting ${trimmedDocs.length}/${relevantDocs.length} results (model: ${reqData.model}, maxResults: ${maxResults}, maxTokens: ${maxTokens || 'unlimited'})`
           )
 
