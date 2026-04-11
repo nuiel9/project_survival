@@ -104,11 +104,22 @@ export default class OllamaController {
             `[RAG] Injecting ${trimmedDocs.length}/${relevantDocs.length} results (model: ${reqData.model}, maxResults: ${maxResults}, maxTokens: ${maxTokens || 'unlimited'})`
           )
 
-          // Build the user-facing sources list (deduped per article) from the same
-          // chunks we're injecting into the prompt, so citations and LLM context stay aligned.
-          chatSources = await this._buildChatSources(trimmedDocs)
+          // Dedupe by article (multiple chunks from the same document collapse into
+          // one citation) while preserving the highest-score chunk's position. The
+          // same deduped list drives both the prompt labels and the Sources footer,
+          // so "[Source 3]" in the model's answer maps to the 3rd item the user sees.
+          const seenKeys = new Set<string>()
+          const dedupedDocs = trimmedDocs.filter((doc) => {
+            const meta = doc.metadata ?? {}
+            const key = meta.document_id || meta.article_path || meta.source || doc.text.slice(0, 64)
+            if (seenKeys.has(key)) return false
+            seenKeys.add(key)
+            return true
+          })
 
-          const contextText = trimmedDocs
+          chatSources = await this._buildChatSources(dedupedDocs)
+
+          const contextText = dedupedDocs
             .map((doc, idx) => {
               const meta = doc.metadata ?? {}
               const label =
@@ -177,8 +188,9 @@ export default class OllamaController {
           }
           response.response.write(`data: ${JSON.stringify(chunk)}\n\n`)
         }
-        if (chatSources.length > 0) {
-          response.response.write(`data: ${JSON.stringify({ sources: chatSources })}\n\n`)
+        const citedSources = this._filterSourcesByCitations(chatSources, fullContent)
+        if (citedSources.length > 0) {
+          response.response.write(`data: ${JSON.stringify({ sources: citedSources })}\n\n`)
         }
         response.response.end()
 
@@ -197,8 +209,9 @@ export default class OllamaController {
 
       // Non-streaming (legacy) path
       const result: any = await this.ollamaService.chat({ ...ollamaRequest, think, numCtx })
-      if (chatSources.length > 0) {
-        result.sources = chatSources
+      const citedSources = this._filterSourcesByCitations(chatSources, result?.message?.content ?? '')
+      if (citedSources.length > 0) {
+        result.sources = citedSources
       }
 
       if (sessionId && result?.message?.content) {
@@ -372,16 +385,17 @@ export default class OllamaController {
   }
 
   /**
-   * Build a deduped, user-facing source list from the RAG chunks injected into the prompt.
-   * ZIM-sourced chunks get a Kiwix viewer URL reconstructed from the book name and article path.
-   * Uploaded-file chunks fall back to the bare filename (no URL).
+   * Build a user-facing source list parallel to the context chunks injected into
+   * the prompt. Callers are responsible for deduping and ordering — this preserves
+   * input order so that "[Source N]" citations from the model map directly to the
+   * Nth footer item.
+   *
+   * ZIM chunks get a Kiwix viewer URL when the file is still on disk and under
+   * /app/storage/zim/. Everything else renders as plain text (no URL).
    */
   private async _buildChatSources(
     docs: Array<{ text: string; score: number; metadata?: Record<string, any> }>
   ): Promise<ChatSource[]> {
-    // Dedupe by document_id (multiple chunks from the same article → one source row).
-    const byKey = new Map<string, { title: string; archive?: string; url?: string; score: number }>()
-
     let kiwixBase: string | null = null
     const hasZim = docs.some((d) => d.metadata?.content_type === 'zim_article')
     if (hasZim) {
@@ -417,12 +431,8 @@ export default class OllamaController {
       return exists
     }
 
-    for (const doc of docs) {
+    return docs.map((doc) => {
       const meta = doc.metadata ?? {}
-      const key = meta.document_id || meta.article_path || meta.source || doc.text.slice(0, 64)
-      const existing = byKey.get(key)
-      if (existing && existing.score >= doc.score) continue
-
       if (
         meta.content_type === 'zim_article' &&
         kiwixBase &&
@@ -432,22 +442,40 @@ export default class OllamaController {
       ) {
         const bookName = path.basename(meta.source, '.zim')
         const url = `${kiwixBase.replace(/\/$/, '')}/viewer#${bookName}/${meta.article_path}`
-        byKey.set(key, {
+        return {
           title: meta.article_title || meta.full_title || bookName,
           archive: meta.archive_title,
           url,
           score: doc.score,
-        })
-      } else {
-        byKey.set(key, {
-          title: meta.article_title || meta.full_title || (meta.source ? path.basename(meta.source) : 'Untitled source'),
-          archive: meta.archive_title,
-          score: doc.score,
-        })
+        }
       }
-    }
+      return {
+        title: meta.article_title || meta.full_title || (meta.source ? path.basename(meta.source) : 'Untitled source'),
+        archive: meta.archive_title,
+        score: doc.score,
+      }
+    })
+  }
 
-    return Array.from(byKey.values()).sort((a, b) => b.score - a.score)
+  /**
+   * Filter a source list down to just the entries the model actually cited in
+   * its answer via "[Source N]" markers. Returns an empty array when no
+   * citations are present — signalling that the retrieved context was ignored
+   * and the answer came from the model's general knowledge, so we should not
+   * stick a misleading Sources footer on it.
+   */
+  private _filterSourcesByCitations(sources: ChatSource[], answer: string): ChatSource[] {
+    if (sources.length === 0 || !answer) return []
+    const cited = new Set<number>()
+    const citationRe = /\[\s*Source\s+(\d+)\s*[:\]]/gi
+    let match: RegExpExecArray | null
+    while ((match = citationRe.exec(answer)) !== null) {
+      const idx = parseInt(match[1], 10) - 1
+      if (idx >= 0 && idx < sources.length) cited.add(idx)
+    }
+    return Array.from(cited)
+      .sort((a, b) => a - b)
+      .map((i) => sources[i])
   }
 
   /**
