@@ -17,6 +17,18 @@ export default class RagController {
       return response.status(400).json({ error: 'No file uploaded' })
     }
 
+    // ZIM archives can't be added this way — they'd land in kb_uploads/ and be
+    // invisible to the Kiwix container (which only watches /app/storage/zim/).
+    // Route the user to the ZIM manager instead, where the file is placed in
+    // the right directory and the Kiwix library XML gets rebuilt.
+    const ext = (uploadedFile.extname || '').toLowerCase()
+    const clientExt = uploadedFile.clientName.toLowerCase().endsWith('.zim')
+    if (ext === 'zim' || clientExt) {
+      return response.status(400).json({
+        error: 'ZIM archives cannot be uploaded through the Knowledge Base file dialog. Use Settings → ZIM Files (or the Remote Explorer) so the archive is placed where Kiwix can serve it and its citations are linkable.',
+      })
+    }
+
     const randomSuffix = randomBytes(6).toString('hex')
     const sanitizedName = sanitizeFilename(uploadedFile.clientName)
 
