@@ -41,7 +41,7 @@ For more control over the installation process, copy and paste the [Docker Compo
 N.O.M.A.D. is a management UI ("Command Center") and API that orchestrates a collection of containerized tools and resources via [Docker](https://www.docker.com/). It handles installation, configuration, and updates for everything — so you don't have to.
 
 **Built-in capabilities include:**
-- **AI Chat with Knowledge Base** — local AI chat powered by [Ollama](https://ollama.com/) with support for remote backends ([Unsloth Studio](https://unsloth.ai/), LM Studio, llama.cpp, etc.), API key authentication, thinking mode toggle, and document upload with semantic search (RAG via [Qdrant](https://qdrant.tech/))
+- **AI Chat with Knowledge Base** — local AI chat powered by [Ollama](https://ollama.com/) with support for remote backends ([Unsloth Studio](https://unsloth.ai/), LM Studio, llama.cpp, etc.), API key authentication with automatic token refresh, thinking mode toggle, document upload with semantic search (RAG via [Qdrant](https://qdrant.tech/)), and inline source citations that link back to the article inside the local [Kiwix](https://kiwix.org/) viewer
 - **Information Library** — offline Wikipedia, medical references, ebooks, and more via [Kiwix](https://kiwix.org/)
 - **Education Platform** — Khan Academy courses with progress tracking via [Kolibri](https://learningequality.org/kolibri/)
 - **Offline Maps** — downloadable regional maps via [ProtoMaps](https://protomaps.com)
@@ -57,7 +57,7 @@ N.O.M.A.D. also includes built-in tools like a Wikipedia content selector, ZIM l
 | Capability | Powered By | What You Get |
 |-----------|-----------|-------------|
 | Information Library | Kiwix | Offline Wikipedia, medical references, survival guides, ebooks |
-| AI Assistant | Ollama + Qdrant | Built-in chat with document upload, semantic search, thinking toggle, and support for remote backends (Unsloth Studio, LM Studio, etc.) |
+| AI Assistant | Ollama + Qdrant | Built-in chat with document upload, semantic search, thinking toggle, Kiwix-linked source citations, and support for remote backends (Unsloth Studio, LM Studio, etc.) with automatic token refresh |
 | Education Platform | Kolibri | Khan Academy courses, progress tracking, multi-user support |
 | Offline Maps | ProtoMaps | Downloadable regional maps with search and navigation |
 | Data Tools | CyberChef | Encryption, encoding, hashing, and data analysis |
