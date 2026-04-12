@@ -6,6 +6,7 @@ import axios from 'axios'
 import { DateTime } from 'luxon'
 import BenchmarkResult from '#models/benchmark_result'
 import BenchmarkSetting from '#models/benchmark_setting'
+import KVStore from '#models/kv_store'
 import { SystemService } from '#services/system_service'
 import type {
   BenchmarkType,
@@ -443,35 +444,48 @@ export class BenchmarkService {
   }
 
   /**
-   * Run AI benchmark using Ollama
+   * Run AI benchmark using Ollama or an OpenAI-compatible remote backend
    */
   private async _runAIBenchmark(): Promise<AIScores> {
-    try {
-
     this._updateStatus('running_ai', 'Running AI benchmark...')
 
-    const ollamaAPIURL = await this.dockerService.getServiceURL(SERVICE_NAMES.OLLAMA)
-    if (!ollamaAPIURL) {
-      throw new Error('AI Assistant service location could not be determined. Ensure AI Assistant is installed and running.')
+    const remoteUrl = (await KVStore.getValue('ai.remoteOllamaUrl')) as string | null
+    if (remoteUrl?.trim()) {
+      return this._runRemoteAIBenchmark(remoteUrl.trim())
     }
+    return this._runLocalOllamaAIBenchmark()
+  }
 
-    // Check if Ollama is available
+  /**
+   * AI benchmark against a local Ollama instance using the native /api/generate endpoint
+   */
+  private async _runLocalOllamaAIBenchmark(): Promise<AIScores> {
     try {
-      await axios.get(`${ollamaAPIURL}/api/tags`, { timeout: 5000 })
-    } catch (error) {
-      const errorCode = error.code || error.response?.status || 'unknown'
-      throw new Error(`Ollama is not running or not accessible (${errorCode}). Ensure AI Assistant is installed and running.`)
-    }
+      const ollamaAPIURL = await this.dockerService.getServiceURL(SERVICE_NAMES.OLLAMA)
+      if (!ollamaAPIURL) {
+        throw new Error('AI Assistant service location could not be determined. Ensure AI Assistant is installed and running.')
+      }
 
-    // Check if the benchmark model is available, pull if not
-    const ollamaService = new (await import('./ollama_service.js')).OllamaService()
-    const modelResponse = await ollamaService.downloadModel(AI_BENCHMARK_MODEL)
-    if (!modelResponse.success) {
-      throw new Error(`Model does not exist and failed to download: ${modelResponse.message}`)
-    }
+      // Check if Ollama is available
+      try {
+        await axios.get(`${ollamaAPIURL}/api/tags`, { timeout: 5000 })
+      } catch (error) {
+        const errorCode = error.code || error.response?.status || 'unknown'
+        throw new Error(`Ollama is not running or not accessible (${errorCode}). Ensure AI Assistant is installed and running.`)
+      }
 
-    // Run inference benchmark
-    const startTime = Date.now()
+      // Check if the benchmark model is available, pull if not
+      this._updateStatus('downloading_ai_model', 'Downloading AI benchmark model (first run only)...')
+      const ollamaService = new (await import('./ollama_service.js')).OllamaService()
+      const modelResponse = await ollamaService.downloadModel(AI_BENCHMARK_MODEL)
+      if (!modelResponse.success) {
+        throw new Error(`Model does not exist and failed to download: ${modelResponse.message}`)
+      }
+
+      this._updateStatus('running_ai', 'Running AI benchmark...')
+
+      // Run inference benchmark
+      const startTime = Date.now()
 
       const response = await axios.post(
         `${ollamaAPIURL}/api/generate`,
@@ -484,7 +498,7 @@ export class BenchmarkService {
       )
 
       const endTime = Date.now()
-      const totalTime = (endTime - startTime) / 1000 // seconds
+      const totalTime = (endTime - startTime) / 1000
 
       // Ollama returns eval_count (tokens generated) and eval_duration (nanoseconds)
       if (response.data.eval_count && response.data.eval_duration) {
@@ -492,10 +506,9 @@ export class BenchmarkService {
         const evalDurationSeconds = response.data.eval_duration / 1e9
         const tokensPerSecond = tokenCount / evalDurationSeconds
 
-        // Time to first token from prompt_eval_duration
         const ttft = response.data.prompt_eval_duration
-          ? response.data.prompt_eval_duration / 1e6 // Convert to ms
-          : (totalTime * 1000) / 2 // Estimate if not available
+          ? response.data.prompt_eval_duration / 1e6
+          : (totalTime * 1000) / 2
 
         return {
           ai_tokens_per_second: Math.round(tokensPerSecond * 100) / 100,
@@ -515,6 +528,181 @@ export class BenchmarkService {
       }
     } catch (error) {
       throw new Error(`AI benchmark failed: ${error.message}`)
+    }
+  }
+
+  /**
+   * AI benchmark against a remote OpenAI-compatible backend (Unsloth Studio, LM Studio, etc.)
+   * Uses /v1/chat/completions with streaming to measure tokens/sec and time-to-first-token,
+   * with a non-streaming fallback if streaming fails.
+   */
+  private async _runRemoteAIBenchmark(remoteUrl: string): Promise<AIScores> {
+    try {
+      const baseUrl = remoteUrl.replace(/\/$/, '')
+      let apiKey = (await KVStore.getValue('ai.remoteOllamaApiKey')) as string | null
+      const headers: Record<string, string> = { 'Content-Type': 'application/json' }
+      if (apiKey?.trim()) {
+        headers['Authorization'] = `Bearer ${apiKey.trim()}`
+      }
+
+      // Discover the first available model from /v1/models
+      let modelId: string
+      try {
+        let modelsResponse = await axios.get(`${baseUrl}/v1/models`, { timeout: 10000, headers })
+
+        // If unauthorized, try refreshing token and retry once
+        if (modelsResponse.status === 401 || modelsResponse.status === 403) {
+          throw Object.assign(new Error('Unauthorized'), { response: { status: modelsResponse.status } })
+        }
+
+        const models = modelsResponse.data?.data
+        if (!Array.isArray(models) || models.length === 0) {
+          throw new Error('No models available on the remote backend.')
+        }
+        const chatModel = models.find((m: any) => !m.id?.includes('embed')) || models[0]
+        modelId = chatModel.id
+      } catch (error) {
+        const status = error.response?.status
+        if (status === 401 || status === 403) {
+          const ollamaService = new (await import('./ollama_service.js')).OllamaService()
+          const newToken = await ollamaService.refreshToken()
+          if (newToken) {
+            apiKey = newToken
+            headers['Authorization'] = `Bearer ${newToken}`
+            const retryResponse = await axios.get(`${baseUrl}/v1/models`, { timeout: 10000, headers })
+            const models = retryResponse.data?.data
+            if (!Array.isArray(models) || models.length === 0) {
+              throw new Error('No models available on the remote backend after token refresh.')
+            }
+            modelId = (models.find((m: any) => !m.id?.includes('embed')) || models[0]).id
+          } else {
+            throw new Error('Remote backend authentication failed. Check your API key.')
+          }
+        } else if (error.response) {
+          throw new Error(`Remote backend returned HTTP ${status}. Ensure the server is running.`)
+        } else {
+          throw new Error(`Could not connect to remote backend at ${baseUrl}: ${error.message}`)
+        }
+      }
+
+      logger.info(`[BenchmarkService] Running remote AI benchmark with model: ${modelId}`)
+
+      // Try streaming first for accurate TTFT, fall back to non-streaming
+      try {
+        return await this._runRemoteAIBenchmarkStreaming(baseUrl, modelId, headers)
+      } catch (streamError) {
+        logger.warn(`[BenchmarkService] Streaming benchmark failed, falling back to non-streaming: ${streamError.message}`)
+        return await this._runRemoteAIBenchmarkNonStreaming(baseUrl, modelId, headers)
+      }
+    } catch (error) {
+      throw new Error(`AI benchmark failed (remote backend): ${error.message}`)
+    }
+  }
+
+  /**
+   * Streaming remote AI benchmark — measures tokens/sec and TTFT via SSE chunks
+   */
+  private async _runRemoteAIBenchmarkStreaming(
+    baseUrl: string, modelId: string, headers: Record<string, string>
+  ): Promise<AIScores> {
+    const startTime = Date.now()
+    let firstTokenTime: number | null = null
+    let tokenCount = 0
+
+    const response = await axios.post(
+      `${baseUrl}/v1/chat/completions`,
+      {
+        model: modelId,
+        messages: [{ role: 'user', content: AI_BENCHMARK_PROMPT }],
+        stream: true,
+      },
+      {
+        timeout: 120000,
+        headers,
+        responseType: 'stream',
+      }
+    )
+
+    await new Promise<void>((resolve, reject) => {
+      let buffer = ''
+      response.data.on('data', (chunk: Buffer) => {
+        buffer += chunk.toString()
+        const lines = buffer.split('\n')
+        buffer = lines.pop() || ''
+
+        for (const line of lines) {
+          const trimmed = line.trim()
+          if (!trimmed.startsWith('data: ') || trimmed === 'data: [DONE]') continue
+          try {
+            const data = JSON.parse(trimmed.slice(6))
+            const content = data.choices?.[0]?.delta?.content
+            if (content) {
+              if (firstTokenTime === null) {
+                firstTokenTime = Date.now()
+              }
+              tokenCount++
+            }
+          } catch { /* skip malformed chunks */ }
+        }
+      })
+      response.data.on('end', resolve)
+      response.data.on('error', reject)
+    })
+
+    const endTime = Date.now()
+    const totalTime = (endTime - startTime) / 1000
+
+    if (tokenCount === 0) {
+      throw new Error('Streaming returned no tokens')
+    }
+
+    const tokensPerSecond = tokenCount / totalTime
+    const ttft = firstTokenTime ? firstTokenTime - startTime : (totalTime * 1000) / 2
+
+    return {
+      ai_tokens_per_second: Math.round(tokensPerSecond * 100) / 100,
+      ai_model_used: modelId,
+      ai_time_to_first_token: Math.round(ttft * 100) / 100,
+    }
+  }
+
+  /**
+   * Non-streaming remote AI benchmark fallback — estimates tokens/sec from response length
+   */
+  private async _runRemoteAIBenchmarkNonStreaming(
+    baseUrl: string, modelId: string, headers: Record<string, string>
+  ): Promise<AIScores> {
+    const startTime = Date.now()
+
+    const response = await axios.post(
+      `${baseUrl}/v1/chat/completions`,
+      {
+        model: modelId,
+        messages: [{ role: 'user', content: AI_BENCHMARK_PROMPT }],
+        stream: false,
+      },
+      { timeout: 120000, headers }
+    )
+
+    const endTime = Date.now()
+    const totalTime = (endTime - startTime) / 1000
+
+    const content = response.data?.choices?.[0]?.message?.content || ''
+    const usage = response.data?.usage
+
+    // Use usage.completion_tokens if available, otherwise estimate
+    const tokenCount = usage?.completion_tokens || Math.ceil(content.split(/\s+/).length * 1.3)
+
+    if (tokenCount === 0) {
+      throw new Error('Remote backend returned an empty response.')
+    }
+
+    const tokensPerSecond = tokenCount / totalTime
+
+    return {
+      ai_tokens_per_second: Math.round(tokensPerSecond * 100) / 100,
+      ai_model_used: modelId,
+      ai_time_to_first_token: Math.round((totalTime * 1000) / 2),
     }
   }
 

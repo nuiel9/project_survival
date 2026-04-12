@@ -37,7 +37,7 @@ export default function BenchmarkPage(props: {
   const { aiAssistantName } = usePage<{ aiAssistantName: string }>().props
   const { subscribe } = useTransmit()
   const queryClient = useQueryClient()
-  const aiInstalled = useServiceInstalledStatus(SERVICE_NAMES.OLLAMA)
+  const { isInstalled: aiInstalled } = useServiceInstalledStatus(SERVICE_NAMES.OLLAMA)
   const [progress, setProgress] = useState<BenchmarkProgressWithID | null>(null)
   const [isRunning, setIsRunning] = useState(props.benchmark.status !== 'idle')
   const refetchLatestRef = useRef<(() => void) | null>(null)
