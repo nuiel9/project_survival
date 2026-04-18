@@ -89,7 +89,7 @@ export const DEFAULT_QUERY_REWRITE_MODEL = 'qwen2.5:3b' // default to qwen2.5 fo
  */
 export const RAG_CONTEXT_LIMITS: { maxParams: number; maxResults: number; maxTokens: number }[] = [
   { maxParams: 3, maxResults: 2, maxTokens: 1000 },   // 1-3B models
-  { maxParams: 8, maxResults: 4, maxTokens: 2500 },   // 4-8B models
+  { maxParams: 8, maxResults: 4, maxTokens: 1200 },   // 4-8B models — keep prompt tight on Apple Silicon / consumer GPUs
   { maxParams: Infinity, maxResults: 5, maxTokens: 0 }, // 13B+ (no cap)
 ]
 
@@ -111,13 +111,14 @@ You have access to relevant information from the knowledge base. This context ha
 ${context}
 
 IMPORTANT INSTRUCTIONS:
-1. If the user's question is directly related to the context above, use this information to provide accurate, detailed answers.
-2. Always cite the specific source when using information from the context. Each chunk above is tagged like "[Source 1: Article Title]". Reference these inline as "[Source 1]", "[Source 2]", etc. so the user can follow your citations back to the listed sources.
-3. If the context is only partially relevant, combine it with your general knowledge but be clear about what comes from the knowledge base.
-4. If the context is not relevant to the user's question, you can respond using your general knowledge without forcing the context into your answer. Do not mention the context if it's not relevant.
-5. Never fabricate information that isn't in the context or your training data.
-6. If you're unsure or you don't have enough information to answer the user's question, acknowledge the limitations.
-7. Always respond in the same language the user writes in, even if the knowledge base context is in a different language. Translate relevant information as needed to match the user's language.
+1. If the user's question is directly related to the context above, use this information to answer concisely and accurately. Stay close to what the sources say.
+2. Be brief. Aim for 2-4 sentences unless the question explicitly asks for steps, depth, or a list.
+3. Always cite the specific source when using information from the context. Each chunk above is tagged like "[Source 1: Article Title]". Reference these inline as "[Source 1]", "[Source 2]", etc. so the user can follow your citations back to the listed sources.
+4. If the context only partially answers the question, say so explicitly rather than padding the answer with general knowledge. Honesty about gaps is preferred over comprehensive-sounding answers.
+5. If the context is not relevant to the user's question, you can respond using your general knowledge without forcing the context into your answer. Do not mention the context if it's not relevant.
+6. Never fabricate information that isn't in the context or your training data.
+7. If you're unsure or you don't have enough information to answer the user's question, acknowledge the limitations.
+8. Always respond in the same language the user writes in, even if the knowledge base context is in a different language. Translate relevant information as needed to match the user's language.
 
 Format your response using markdown for readability.
 `,
