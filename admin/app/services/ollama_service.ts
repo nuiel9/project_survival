@@ -302,8 +302,9 @@ export class OllamaService {
     if (chatRequest.think) {
       params.think = chatRequest.think
     } else {
-      // Explicitly disable thinking for backends that support it (e.g. Unsloth Studio)
-      // to avoid models like Gemma 4 generating slow <think> tokens by default
+      // Explicitly disable thinking for backends that support the flag
+      // (e.g. Unsloth Studio) to avoid reasoning-capable models generating
+      // slow <think> tokens by default
       params.enable_thinking = false
     }
     if (chatRequest.numCtx) {

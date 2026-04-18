@@ -254,7 +254,7 @@ export default function Chat({
 
         try {
           await api.streamChatMessage(
-            { model: selectedModel || 'llama3.2', messages: chatMessages, stream: true, sessionId: sessionId ? Number(sessionId) : undefined, enableThinking: thinkingEnabled },
+            { model: selectedModel || 'llama3.1:8b-instruct-q4_K_M', messages: chatMessages, stream: true, sessionId: sessionId ? Number(sessionId) : undefined, enableThinking: thinkingEnabled },
             (chunkContent, chunkThinking, done, chunkSources) => {
               if (chunkSources && chunkSources.length > 0) {
                 setMessages((prev) =>
@@ -348,7 +348,7 @@ export default function Chat({
       } else {
         // Non-streaming (legacy) path
         chatMutation.mutate({
-          model: selectedModel || 'llama3.2',
+          model: selectedModel || 'llama3.1:8b-instruct-q4_K_M',
           messages: chatMessages,
           sessionId: sessionId ? Number(sessionId) : undefined,
         })
