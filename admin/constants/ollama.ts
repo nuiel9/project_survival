@@ -24,6 +24,25 @@ export const FALLBACK_RECOMMENDED_OLLAMA_MODELS: NomadOllamaModel[] = [
     ],
   },
   {
+    name: 'scb10x/llama3.1-typhoon2-8b-instruct',
+    description:
+      'Typhoon2 8B Instruct is a Thai/English bilingual LLM from SCB 10X, fine-tuned on Llama 3.1 8B for stronger Thai instruction-following than the vanilla base.',
+    estimated_pulls: 'n/a',
+    id: 'f2d1a3c8-7b5e-4a12-9d3b-2c8f1e4a9b70',
+    first_seen: '2026-04-18T00:00:00.000+00:00',
+    model_last_updated: 'recent',
+    tags: [
+      {
+        name: 'scb10x/llama3.1-typhoon2-8b-instruct:latest',
+        size: '4.9 GB',
+        context: '128k',
+        input: 'Text',
+        cloud: false,
+        thinking: false
+      },
+    ],
+  },
+  {
     name: 'deepseek-r1',
     description:
       'DeepSeek-R1 is a family of open reasoning models with performance approaching that of leading models, such as O3 and Gemini 2.5 Pro.',
