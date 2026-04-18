@@ -105,7 +105,7 @@ For remote Ollama instances, the host must be started with `OLLAMA_HOST=0.0.0.0`
 
 **API Key Authentication:** Some backends (e.g. Unsloth Studio, vLLM) require authentication. You can provide an API key in the Remote Connection settings. For backends that use JWT tokens (like Unsloth Studio), N.O.M.A.D. supports automatic token refresh using a stored refresh token — no manual token updates needed after initial setup.
 
-**Thinking Mode Toggle:** The chat interface includes a thinking mode toggle button. When enabled, models with reasoning capabilities (e.g. Gemma 4, QwQ) will generate step-by-step reasoning before answering. When disabled, responses are faster as the model skips the reasoning phase.
+**Thinking Mode Toggle:** The chat interface includes a thinking mode toggle button. When enabled, models with reasoning capabilities (e.g. DeepSeek-R1, QwQ) generate step-by-step reasoning before answering. When disabled, responses are faster as the model skips the reasoning phase. Non-reasoning models like Llama 3.1 ignore the toggle.
 
 **RAG with Remote Backends:** When using a remote backend for chat, the local Ollama instance is still used for generating embeddings (RAG). This means your Knowledge Base and Kiwix ZIM files are embedded locally regardless of which backend handles chat.
 

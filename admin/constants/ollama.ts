@@ -14,8 +14,8 @@ export const FALLBACK_RECOMMENDED_OLLAMA_MODELS: NomadOllamaModel[] = [
     model_last_updated: '1 year ago',
     tags: [
       {
-        name: 'llama3.1:8b-text-q4_1',
-        size: '5.1 GB',
+        name: 'llama3.1:8b-instruct-q4_K_M',
+        size: '4.9 GB',
         context: '128k',
         input: 'Text',
         cloud: false,
