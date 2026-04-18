@@ -454,10 +454,28 @@ export class OllamaService {
   }
 
   /**
+   * True when the URL points back at the docker host / loopback — i.e. the
+   * "remote" Ollama is actually the same Ollama serving embeddings.
+   * Used to avoid falling back to a non-existent bundled container when the
+   * user's Remote Connection points at host-native Ollama (the standard
+   * macOS Metal-GPU topology).
+   */
+  private _isHostLoopback(url: string): boolean {
+    try {
+      const u = new URL(url)
+      return ['host.docker.internal', 'localhost', '127.0.0.1', '0.0.0.0'].includes(u.hostname)
+    } catch {
+      return false
+    }
+  }
+
+  /**
    * Generate embeddings for the given input strings.
    * Always uses the local Ollama instance for embeddings, even when a remote
    * backend (Unsloth Studio, LM Studio, etc.) is configured for chat — remote
-   * backends typically don't host embedding models.
+   * backends typically don't host embedding models. When the configured Remote
+   * URL points at the docker host (e.g. host.docker.internal:11434), it IS
+   * the local Ollama and is used directly.
    * Tries the Ollama native /api/embed endpoint first, falls back to /v1/embeddings.
    */
   public async embed(model: string, input: string[]): Promise<{ embeddings: number[][] }> {
@@ -470,10 +488,11 @@ export class OllamaService {
     // (Unsloth Studio, etc.) don't serve embedding models.
     const customUrl = (await KVStore.getValue('ai.remoteOllamaUrl')) as string | null
     let embedBaseUrl = this.baseUrl!
-    if (customUrl && customUrl.trim()) {
-      // A remote backend is configured for chat; use the local Ollama container directly
-      // for embeddings. We can't use DockerService.getServiceURL() because it also returns
-      // the remote URL. In production, the container hostname is the service name.
+    if (customUrl && customUrl.trim() && !this._isHostLoopback(customUrl)) {
+      // A genuinely remote backend is configured for chat; use the local Ollama
+      // container directly for embeddings. In production, the container hostname
+      // is the service name. (When customUrl is loopback, this.baseUrl already
+      // points at the host's Ollama, so we skip this override.)
       const hostname = process.env.NODE_ENV === 'production' ? SERVICE_NAMES.OLLAMA : 'localhost'
       embedBaseUrl = `http://${hostname}:11434`
     }
@@ -502,12 +521,15 @@ export class OllamaService {
 
   /**
    * Get models from the local Ollama instance, bypassing any remote backend config.
-   * Used by RAG to verify embedding model availability.
+   * Used by RAG to verify embedding model availability. When the configured
+   * Remote URL points at the docker host (e.g. host.docker.internal:11434),
+   * it IS the local Ollama and is queried directly.
    */
   public async getLocalModels(includeEmbeddings = false): Promise<NomadInstalledModel[]> {
     const customUrl = (await KVStore.getValue('ai.remoteOllamaUrl')) as string | null
-    if (!customUrl?.trim()) {
-      // No remote configured — getModels already queries local
+    if (!customUrl?.trim() || this._isHostLoopback(customUrl)) {
+      // No remote configured, or remote points at the docker host — getModels
+      // already queries the right Ollama (this.baseUrl).
       return this.getModels(includeEmbeddings)
     }
     const hostname = process.env.NODE_ENV === 'production' ? SERVICE_NAMES.OLLAMA : 'localhost'
